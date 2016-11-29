@@ -14,6 +14,12 @@
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 # GNU General Public License for more details.
 # ------------------------------------------ #
+# What do I need this for?
+# If you need to backup the content of a folder, everyday..
+# And copy in a backup folder names as the day of the year sequentially..
+# And delete the file in the source folder to make place for new ones..
+# This script will do the job.
+# ------------------------------------------ #
 # Usage: 
 # This script is called by CRON and will run at 23:55 every day.
 # It will copy yesterday's files inside $TODAY-1 folder.
