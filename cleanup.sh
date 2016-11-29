@@ -39,13 +39,6 @@
 # |          |__cleanup.sh
 # |____Data
 #          |__The file to process
-#
-# ------------------------------------------ #
-# Nagios/Unix Exit codes
-# OK=0
-# WARNING=1
-# CRITICAL=2
-# UNKNOWN=3
 
 
 export PATH=$PATH:/bin:/usr/bin:/usr/local/bin
