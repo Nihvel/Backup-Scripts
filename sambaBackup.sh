@@ -69,6 +69,10 @@
 # Name format:
 # ${TODAY}_${ROW}.dat
 #
+# You'll notice I refer to a ftp path, or something mounted as RO.
+# It depends if the destination folder is a shared folder or not.
+# Mine is, with nfs filesystem. Therefore I applied some tricks when, for weird reasons,
+# the share is not accessible or RO mounted (don't ask me why).
 
 TOSAVE=$1
 PLIST=$2
@@ -77,9 +81,9 @@ DESTF=$3
 LIST=$(echo ${PLIST} | awk 'BEGIN{FS="/"}{print $NF}') # Cut whole path from $2
 TODAY=$(date +%d%m%y)
 TIME=$(date +%c)
-KEY="/home/myuser/scripts/samba/enc"
-ERROR="/backup/samba_backup/ERROR"
-MAIL="/tmp/mail_${LIST}.log"
+KEY="/home/myuser/scripts/samba/enc" #you'll need to create your own certificate to encrypt your backup
+ERROR="/backup/samba_backup/ERROR" #if destination folder is not accessible
+MAIL="/tmp/mail_${LIST}.log" #will be used with check_backup_status.sh and Nagios
 FTPDEL="/tmp/delete_${LIST}"
 
 LOG2=""
