@@ -216,7 +216,7 @@ done <${PLIST}
 
 sleep 30
 # Find backups older than 3 months and delete them
-find ${DESTF} -type f -mtime +90 -printf "%f\n" > ${FTPDEL}
+find ${DESTF} -maxdepth 1 -type f -mtime +90 -printf "%f\n" > ${FTPDEL}
 sleep 3
 if [[ $? -eq 0 && $(wc -l <${FTPDEL}) -gt 0 ]]; then
   cd ${DESTF}
