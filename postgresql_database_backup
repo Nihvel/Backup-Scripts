@@ -91,7 +91,7 @@ fi
 
 
 # Delete db backup older than 180+ days
-find ${BDIR} -type f -name "*.enc" -mtime +180 -printf "%f\n" > $FDEL
+find ${BDIR} -maxdepth 1 -type f -name "*.enc" -mtime +180 -printf "%f\n" > $FDEL
 if [[ $? -eq 0 && $(wc -l <"$FDEL") -gt 0 ]]; then
   cd ${BDIR}
   xargs -d '\n' -a $FDEL rm
