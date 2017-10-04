@@ -1,0 +1,113 @@
+#!/bin/bash
+#
+# ------------------------------------------ #
+# File : db_backup.sh
+# Author : Juri Calleri
+# Email : juri@juricalleri.net
+# Date : 03/10/2017
+# ------------------------------------------ #
+# Info:
+# This tool makes encrypted backup of a single postgres database and
+# it deletes backups older than 180 days.
+# Edit the 'Vars' section to adapt to your needs.
+#
+# I can suggest the following permission on the folders:
+# mkdir /backup
+# chown postgres:root /backup
+# chmod ug=rwX,o= /backup
+# The umask 377 will create new file in this path with only 1 readable flag on the root user, if ran under Cron or root.
+#
+# mkdir -p /path/to/the/script.sh
+# chown -R root:root /path/
+# chmod u=r,go= /path/to/the/script.sh
+#
+# mkdir /path/to/the/enc
+# you will store here the certs.
+# After the certs are created, set the permissions:
+# chown -R root:root /path/to/the/enc
+# chmod u=rX,go= /path/to/the/enc
+# chmod u=r,go= /path/to/the/enc/*
+# ------------------------------------------ #
+# Usage:
+#
+# Best if run with Cron:
+# 0 23 * * sat /bin/bash /path/to/the/script.sh # At 23:00 of every saturday
+#
+# First of all, create the certificates as root. Move to the certs folder:
+# cd /path/to/the/enc
+#
+# Generate the public and private key
+# openssl genrsa -out privatekey.pem 2048
+#
+# Extract the public key
+# openssl rsa -in privatekey.pem -out publickey.pem -outform PEM -pubout
+#
+# Save the 'privatekey.pem' in a safe location, it is necessary to decrypt the backup
+# 
+# After running this script, the file created will be 2.
+# The backup itself ending with .enc and the key to decrypt this backup, ending with .key.enc
+# Both the file are encrypted.
+# To decrypt, adapt the codes at the bottom of this file with the filename.enc and filename.key.enc you wish to decrypt
+
+# Options
+umask 377
+
+
+# Vars
+TODAY=$(date +%d%m%y)
+BDIR=/backup/
+FDEL="/tmp/file2delete"
+ENC=enc/
+DB=mydb
+USER=postgres
+FNAME="${BDIR}${TODAY}_${DB}_db_backup"
+FLOG="/var/log/${DB}_db_backup.log"
+
+# Backing up the db
+su -c "pg_dump --format=c --file=${FNAME} ${DB}" $USER
+if [[ $? -eq 0 && -e ${FNAME} ]]; then
+  LOG="${DB} DB of ${TODAY} backed up!"
+else
+  LOG="Problem to backup ${DB} DB of ${TODAY}."
+fi
+
+
+# Encrypt the DB
+#Generate the random password file
+openssl rand -base64 128 -out "${FNAME}.key"
+
+#Encrypt the file with the random key
+openssl enc -aes-256-cbc -salt -in ${FNAME} -out "${FNAME}.enc" -pass file:"${FNAME}.key"
+
+#Encrypt the random key with the public keyfile
+openssl rsautl -encrypt -inkey "${ENC}publickey.pem" -pubin -in "${FNAME}.key" -out "${FNAME}.key.enc"
+if [[ $? -eq 0 && -e ${FNAME}.enc && -e ${FNAME}.key.enc ]]; then
+  LOG+=" - Encrypted. "
+  rm ${FNAME}
+  rm "${FNAME}.key"
+else
+  LOG+=" - Not encrypted."
+fi
+
+
+# Delete db backup older than 180+ days
+find ${BDIR} -type f -name "*.enc" -mtime +180 -printf "%f\n" > $FDEL
+if [[ $? -eq 0 && $(wc -l <"$FDEL") -gt 0 ]]; then
+  cd ${BDIR}
+  xargs -d '\n' -a $FDEL rm
+  LOG+=" - Old DB backup deleted."
+else
+  LOG+=" - No old DB backup to delete."
+fi
+rm $FDEL
+
+
+# Writing result
+echo ${LOG} >> ${FLOG}
+
+
+#Decrypt the random key with our private key file
+#openssl rsautl -decrypt -inkey "${ENC}privatekey.pem" -in "${FNAME}.key.enc" -out "${FNAME}.key"
+#
+#Decrypt the large file with the random key
+#openssl enc -d -aes-256-cbc -in "${FNAME}.enc" -out "${FNAME}" -pass file:"${FNAME}.key"
