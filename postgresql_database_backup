@@ -57,7 +57,7 @@ umask 377
 TODAY=$(date +%d%m%y)
 BDIR=/backup/
 FDEL="/tmp/file2delete"
-ENC=enc/
+ENC=/backup/script/enc/
 DB=mydb
 USER=postgres
 FNAME="${BDIR}${TODAY}_${DB}_db_backup"
