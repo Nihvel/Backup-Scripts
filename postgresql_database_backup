@@ -1,5 +1,6 @@
 #!/bin/bash
-#
+#set -x
+#clear
 # ------------------------------------------ #
 # File : db_backup.sh
 # Author : Juri Calleri
@@ -14,100 +15,466 @@
 # I can suggest the following permission on the folders:
 # mkdir /backup
 # chown postgres:root /backup
-# chmod ug=rwX,o= /backup
+# #chmod ug=rwX,o= /backup
+#
 # The umask 377 will create new file in this path with only 1 readable flag on the root user, if ran under Cron or root.
 #
 # mkdir -p /path/to/the/script.sh
 # chown -R root:root /path/
-# chmod u=r,go= /path/to/the/script.sh
+# #chmod u=r,go= /path/to/the/script.sh
 #
 # mkdir /path/to/the/enc
 # you will store here the certs.
 # After the certs are created, set the permissions:
 # chown -R root:root /path/to/the/enc
-# chmod u=rX,go= /path/to/the/enc
-# chmod u=r,go= /path/to/the/enc/*
+# #chmod u=rX,go= /path/to/the/enc
+# #chmod u=r,go= /path/to/the/enc/*
 # ------------------------------------------ #
 # Usage:
 #
 # Best if run with Cron:
-# 0 23 * * sat /bin/bash /path/to/the/script.sh # At 23:00 of every saturday
+# 0 23 * * sat /bin/bash /path/to/the/script.sh backup # At 23:00 of every saturday
 #
-# First of all, create the certificates as root. Move to the certs folder:
-# cd /path/to/the/enc
+# Check 'usage' function for more details
 #
-# Generate the public and private key
-# openssl genrsa -out privatekey.pem 2048
-#
-# Extract the public key
-# openssl rsa -in privatekey.pem -out publickey.pem -outform PEM -pubout
-#
-# Save the 'privatekey.pem' in a safe location, it is necessary to decrypt the backup
-# 
-# After running this script, the file created will be 2.
-# The backup itself ending with .enc and the key to decrypt this backup, ending with .key.enc
-# Both the file are encrypted.
-# To decrypt, adapt the codes at the bottom of this file with the filename.enc and filename.key.enc you wish to decrypt
 
 # Options
 umask 377
-
+# The umask makes so that the script does not have to run any chmod
 
 # Vars
 TODAY=$(date +%d%m%y)
-BDIR=/backup/
-FDEL=/tmp/file2delete
-ENC=/backup/script/enc/
-DB=mydb
+BDIR="/backup/"
+SCRIPT="/root/script/"
+ENC="/root/script/enc/"
+FDEL="/tmp/file2delete"
+DB=myDB
 USER=postgres
 FNAME="${BDIR}${TODAY}_${DB}_db_backup"
 FLOG="/var/log/${DB}_db_backup.log"
+TOKEN=0
+CHOICE="$1"
+FILENAME="$2"
 
-# Backing up the db
-su -c "pg_dump --format=c --file=${FNAME} ${DB}" $USER
-if [[ $? -eq 0 && -e ${FNAME} ]]; then
-  LOG="${DB} of ${TODAY} backed up!"
+PRIVATE="privatecert.pem"
+PUBLIC="publiccert.pem"
+
+# colors and text modifires
+#refer to am-i-root() for a sample
+#BLACK=$(tput setaf 0)
+#RED=$(tput setaf 1)
+#GREEN=$(tput setaf 2)
+#YELLOW=$(tput setaf 3)
+#LIME_YELLOW=$(tput setaf 190)
+#POWDER_BLUE=$(tput setaf 153)
+#BLUE=$(tput setaf 4)
+#MAGENTA=$(tput setaf 5)
+#CYAN=$(tput setaf 6)
+#WHITE=$(tput setaf 7)
+#BRIGHT=$(tput bold)
+#NORMAL=$(tput sgr0)
+#BLINK=$(tput blink)
+#REVERSE=$(tput smso)
+#UNDERLINE=$(tput smul)
+#normal=$(tput sgr0)
+
+
+function make-log-file(){
+# Create the log file and allow all users to read it (override umask)
+touch "$FLOG"
+chmod ug=rw,o=r "$FLOG"
+if [ -f "$FLOG" ]; then
+  echo "Log file created"
+  return 0
 else
-  LOG="Problem to backup ${DB} of ${TODAY}."
+  echo "Problem creating the log file"
+  return 2
+fi
+}
+
+
+function checklog(){
+RES=$(tail -1 "$FLOG")
+STATUS=$(echo "$RES" | awk -F": " '{print $1}')
+
+case "$STATUS" in
+"OK")
+  echo "$RES"
+  exit 0
+  ;;
+*)
+  echo "$RES"
+  exit 2
+  ;;
+esac
+}
+
+
+usage(){
+THIS=$(basename "$0")
+cat <<EOF
+
+*To create the folders for the backup and/or restore:   ./$THIS set-folder
+*To create the certificates for en/de-cryption:         ./$THIS make-certs
+To run a backup of the specified Database:              ./$THIS backup
+To decrypt a specific backup:                           ./$THIS decrypt filename [without file extension]
+                                                        ./$THIS decrypt ${TODAY}_${DB}_db_backup
+To restore a Database in the current server:            ./$THIS restore filename [without file extension]
+                                                        ./$THIS restore ${TODAY}_${DB}_db_backup
+To check the status in the log file:                    ./$THIS checklog
+
+*Only run once
+
+Notes:
+    (1) Run this program as root.
+    
+    (2) The 'backup' and 'restore' will run under the ${USER} user, make sure the backup folder is accessible to this user.
+        If you run the 'set-folder', it pretty much is.
+      
+    (3) Always run 'restore' with full path of the restore file:
+        ./db_backup.sh restore /backup/${TODAY}_${DB}_db_backup
+
+Variables currently set:
+    Backup folder:               ${BDIR}
+    List of file to delete:      ${FDEL} 
+    Encryption folder:           ${ENC}
+    Database:                    ${DB}
+    User:                        ${USER}
+    Database backup file:        ${FNAME}
+    Log file:                    ${FLOG}
+    
+The structure of folders used by $THIS is as follows (user can change this editing the 'Vars' section):
+/ (FS root)
+|___
+    |___/backup
+    |   |__${TODAY}_${DB}_db_backup.enc
+    |   |__${TODAY}_${DB}_db_backup.key.enc
+    |__/root
+    |   |___script
+    |       |__[optional if user wants to copy $THIS here]
+    |       |__enc
+    |           |__$PRIVATE (For security reasons, it is better not to store the $PRIVATE file in the same server)
+    |           |__$PUBLIC
+    |___/etc
+    |___/home
+    |___[...]
+    
+EOF
+}
+
+
+function am-i-root(){
+if [ $EUID -ne 0 ]; then
+  return 0
+else
+  return 1
+fi
+}
+
+
+function make-certs(){
+# First of all, create the certificates as root. Move to the certs folder:
+if [ ! -d "$ENC" ]; then
+  echo "Please run 'set-folder' first"
+  exit 1
+fi
+cd "$ENC"
+
+if [[ -f "$PRIVATE" || -f "$PUBLIC" ]]; then
+while true; do
+  read -p  "The certificates already exist. Do you want to create new ones?: [Yes|No]:  " answer
+  case ${answer:0:1} in
+    [Yy]* ) echo "Proceeding to create the certificates..."; break;;
+    [Nn]* ) echo "Certificates not created."; exit 0; break;;
+    * ) echo "Please choose Yes|No";;
+  esac
+done
 fi
 
+# Generate the public and private key
+echo "Generating the private certificate..."
+openssl genrsa -out "$PRIVATE" 2048
+if [ ! -f "$PRIVATE" ]; then
+  echo "There was a problem creating ${PRIVATE}"
+  exit 1
+fi
+
+# Extract the public key
+echo "Extracting the public certificate..."
+openssl rsa -in "$PRIVATE" -out "$PUBLIC" -outform PEM -pubout
+if [ ! -f "$PUBLIC" ]; then
+  echo "There was a problem extracting ${PUBLIC} from ${PRIVATE}"
+  exit 1
+fi
+
+echo "Certificates created!"
+echo "Save the '$PRIVATE' in a safe location, it is necessary to decrypt the backup"
+
+chown -R root:root "$ENC"
+#chmod u=rX,go= "$ENC"
+#chmod u=r,go= "${ENC}*.pem"
+}
+
+
+function set-folder(){
+if [ ! -d "$BDIR" ]; then
+  mkdir "$BDIR"
+fi
+chown postgres:root "$BDIR"
+#chmod ug=rwX,o= "$BDIR"
+
+if [ ! -d "$SCRIPT" ]; then # creating the script folder
+  mkdir "$SCRIPT"
+fi
+chown -R root:root "$SCRIPT" # only root can enter here
+#chmod u=rX,go= "$SCRIPT" # as I said, only root can access this path
+
+if [ ! -d "$ENC" ]; then # creating the folder for the certificates
+  mkdir "$ENC"
+fi
+while true; do
+  read -p  "Do you want to create the certificates right now?: [Yes|No]:  " answer
+  case ${answer:0:1} in
+    [Yy]* ) make-certs; break;;
+    [Nn]* ) echo "Certificates not created"; break;;
+    * ) echo "Please choose Yes|No";;
+  esac
+done
+}
+
+
+function backup(){
+# Backing up the db
+su - "$USER" -c "pg_dump --format=c --file=${FNAME} ${DB}"
+if [[ $? -eq 0 && -e "$FNAME" ]]; then
+  LOG="${DB} DB of ${TODAY} backed up!"
+  ((TOKEN+=1))
+else
+  LOG="Problem to backup ${DB} DB of ${TODAY}."
+  exit 2
+fi
 
 # Encrypt the DB
-#Generate the random password file
+#Generate the random password file with a nice bug on openssl
 openssl rand -base64 128 -out "${FNAME}.key"
-
-#Encrypt the file with the random key
-openssl enc -aes-256-cbc -salt -in ${FNAME} -out "${FNAME}.enc" -pass file:"${FNAME}.key"
-
-#Encrypt the random key with the public keyfile
-openssl rsautl -encrypt -inkey "${ENC}publickey.pem" -pubin -in "${FNAME}.key" -out "${FNAME}.key.enc"
-if [[ $? -eq 0 && -e ${FNAME}.enc && -e ${FNAME}.key.enc ]]; then
-  LOG+=" - Encrypted. "
-  rm ${FNAME}
-  rm "${FNAME}.key"
-else
-  LOG+=" - Not encrypted."
+if [ $? -ne 0 ]; then
+openssl rand -base64 -out "${FNAME}.key" 128
+fi
+if [ ! -f "${FNAME}.key" ]; then
+  echo "There was a problem to generate the random password file: ${FNAME}.key"
+  LOG+=" - There was a problem to generate the random password file: ${FNAME}.key"
+  exit 2
 fi
 
+#Encrypt the file with the random key
+openssl enc -aes-256-cbc -salt -in "$FNAME" -out "${FNAME}.enc" -pass file:"${FNAME}.key"
+if [ ! -f "${FNAME}.enc" ]; then
+  echo "There was a problem to encrypt the file: ${FNAME}"
+  LOG+=" - There was a problem to encrypt the file: ${FNAME}"
+  exit 2
+fi
+
+#Encrypt the random key with the public keyfile
+openssl rsautl -encrypt -inkey "${ENC}${PUBLIC}" -pubin -in "${FNAME}.key" -out "${FNAME}.key.enc"
+if [[ $? -eq 0 && -f "${FNAME}.enc" && -f "${FNAME}.key.enc" ]]; then
+  LOG+=" - Encrypted "
+  rm "$FNAME"
+  rm "${FNAME}.key"
+  ((TOKEN+=1))
+else
+  LOG+=" - Not encrypted "
+fi
 
 # Delete db backup older than 180+ days
-find ${BDIR} -maxdepth 1 -type f -name "*.enc" -mtime +180 -printf "%f\n" > $FDEL
+find "$BDIR" -maxdepth 1 -type f -name "*.enc" -mtime +180 -printf "%f\n" > "$FDEL"
 if [[ $? -eq 0 && $(wc -l <"$FDEL") -gt 0 ]]; then
-  cd ${BDIR}
-  xargs -d '\n' -a $FDEL rm
+  cd "$BDIR"
+  xargs -d '\n' -a "$FDEL" rm
   LOG+=" - Old ${DB} backup deleted."
 else
   LOG+=" - No old ${DB} backup to delete."
 fi
-rm $FDEL
-
+rm "$FDEL"
 
 # Writing result
-echo ${LOG} >> ${FLOG}
+if [ $TOKEN -lt 2 ]; then
+  HEADER="Error: "
+else
+  HEADER="OK: "
+fi
+echo "${HEADER}${LOG}" >> "$FLOG"
+}
 
+
+function decrypt(){
+#Does the privatekey exists in the server?
+if [ ! -f "${ENC}${PRIVATE}" ]; then
+    echo "${ENC}${PRIVATE} not found!"
+    echo "Error: path not found => ${ENC}${PRIVATE}"
+    exit 1
+fi
+
+#Do we have a backup to open - Part 1?
+if [ ! -f "${FILENAME}.key.enc" ]; then
+    echo "${FILENAME}.key.enc not found!"
+    echo "Error: path not found => ${FILENAME}.key.enc"
+    exit 1
+fi
+
+#Do we have a backup to open - Part 2?
+if [ ! -f "${FILENAME}.enc" ]; then
+    echo "${FILENAME}.enc not found!"
+    echo "Error: path not found => ${FILENAME}.enc"
+    exit 1
+fi
 
 #Decrypt the random key with our private key file
-#openssl rsautl -decrypt -inkey "${ENC}privatekey.pem" -in "${FNAME}.key.enc" -out "${FNAME}.key"
-#
-#Decrypt the large file with the random key
-#openssl enc -d -aes-256-cbc -in "${FNAME}.enc" -out "${FNAME}" -pass file:"${FNAME}.key"
+TOKEN=0
+openssl rsautl -decrypt -inkey "${ENC}${PRIVATE}" -in "${FILENAME}.key.enc" -out "${FILENAME}.key"
+if [[ $? -eq 0 && $(wc -l <"${FILENAME}.key") -gt 0 ]]; then
+  LOG="${FILENAME}.key extracted succesfully."
+  ((TOKEN+=1))
+else
+  LOG="Problem extracting ${FILENAME}.key"
+fi
+
+#Decrypt the large file with the random key USING THE SAME OPENSSL VERSION:
+openssl enc -d -aes-256-cbc -in "${FILENAME}.enc" -out "${FILENAME}" -pass file:"${FILENAME}.key"
+if [[ $? -eq 0 && $(wc -l <"${FILENAME}.key") -gt 0 ]]; then
+  LOG+=" - ${FILENAME} extracted succesfully."
+  ((TOKEN+=1))
+else
+  LOG+=" - Problem extracting ${FILENAME}. Trying extracting for a different OpenSSL version..."
+  #Decrypt the large file with the random key USING A DIFFERENT OPENSSL VERSION:
+  openssl enc -d -aes-256-cbc -md md5 -in "${FILENAME}.enc" -out "${FILENAME}" -pass file:"${FILENAME}.key"
+  if [[ $? -eq 0 && $(wc -l <"${FILENAME}.key") -gt 0 ]]; then
+    LOG+=" - ${FILENAME} extracted succesfully."
+    ((TOKEN+=1))
+  else
+    LOG+=" - Problem extracting ${FILENAME}"
+  fi
+fi
+
+# Writing result
+if [ $TOKEN -lt 2 ]; then
+  HEADER="Error: "
+else
+  HEADER="OK: "
+fi
+echo "${HEADER}${LOG}" >> "$FLOG"
+}
+
+
+function restore(){
+# Do we have a backup to restore?
+if [ ! -f "$FILENAME" ]; then
+    echo "${FILENAME} not found!"
+    echo "Error: path not found => ${FILENAME}"
+    exit 1
+fi
+
+# Do we have a database already?
+# Yes, we do. Drop it?
+cd /tmp
+LOG=""
+su -c "psql -lqt | cut -d \| -f 1 | grep -qw ${DB}" "$USER"
+if [ $? -eq 0 ]; then
+  DB_EXIST=true
+  while true; do
+    echo "${DB} found!"
+    LOG+="${DB} found, DROP it? Your choice: "
+    read -p  "Do you want to DROP the database: ${DB} ? [Yes|No]:  " answer
+    case ${answer:0:1} in
+      [Yy]* ) su -c "psql -c 'drop database ${DB};'" "$USER"; LOG+=" Yes "; DB_EXIST=false; break;;
+      [Nn]* ) echo "Database not deleted"; LOG+=" No "; DB_EXIST=true; break;;
+      * ) echo "Please choose Yes|No";;
+    esac
+  done
+else 
+  DB_EXIST=false
+fi
+
+# No, we don't. Create it?
+if [ !$DB_EXIST ]; then
+  while true; do
+    LOG+="${DB} not found, create? Your choice: "
+    read -p  "Do you want to create the database: ${DB} ? [Yes|No]:  " answer
+    case ${answer:0:1} in
+      [Yy]* ) su -c "psql -c 'create database ${DB} TEMPLATE template0;'" "$USER"; LOG+=" Yes "; DB_EXIST=true; break;;
+      [Nn]* ) echo "Database not created"; LOG+=" No "; DB_EXIST=false; break;;
+      * ) echo "Please choose Yes|No";;
+    esac
+  done
+fi
+
+# Restoring the backup
+if [ $DB_EXIST ]; then
+ su -c "pg_restore --dbname=${DB} ${FILENAME}" "$USER"
+ if [ $? -eq 0 ]; then
+   LOG+=" - ${DB} DB restored!"
+   ((TOKEN+=1))
+ else
+   LOG+=" - Problem to restore ${DB}."
+ fi
+else
+  echo "The database can not be restored if it doesn't exists"
+  LOG+=" - The database can not be restored if it doesn't exists"
+fi
+
+# Writing result
+if [ $TOKEN -ne 1 ]; then
+  HEADER="Error: "
+else
+  HEADER="OK: "
+fi
+echo "${HEADER}${LOG}" >> "$FLOG"
+}
+
+
+# MAIN #
+
+# If the user running this script is not root and wants to read the logs only (Nagios user), allow it.
+if [ "$CHOICE" != "checklog" ]; then 
+  if am-i-root; then
+    RED=$(tput setaf 1)
+    printf "%40s\n" "${RED}Please run as root!${normal}"
+    echo ""
+    usage
+    exit 1
+  fi
+fi
+
+if [ ! -f "$FLOG" ]; then
+  make-log-file
+fi
+
+case "$CHOICE" in
+
+set-folder)
+  set-folder
+  ;;
+
+make-certs)
+  make-certs
+  ;;
+  
+backup)
+  backup
+  ;;
+ 
+decrypt)
+ decrypt
+ ;;
+ 
+restore)
+ restore
+ ;;
+ 
+checklog)
+ checklog
+ ;;
+ 
+*)
+ usage
+ ;;
+esac
